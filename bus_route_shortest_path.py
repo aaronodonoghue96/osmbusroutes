@@ -26,17 +26,13 @@ import io
 from urllib.request import urlopen, Request
 from PIL import Image
 
-start_time = time.time()
-
 top = tk.Tk()
 
-WALKING_SPEED = 6 # avergae walking speed in km/hr
+WALKING_SPEED = 6 # average walking speed in km/hr
 BUS_SPEED = 22 # average bus speed in Cork in km/hr
 
 # a list of bus stops which have charging stations
 charging_stations = []
-
-start_graph = time.time()
 
 # create a graph of size 12.5 sq km using OSM data from Cork
 G1 = ox.graph_from_address("Cork, Cork, Ireland", dist=12500, network_type="drive_service", simplify=False)
@@ -56,14 +52,11 @@ G3 = ox.graph_from_address("Ovens, Cork, Ireland", dist=5000, network_type="driv
 # while minimizing the amount of land with no bus routes
 G = nx.compose_all([G1, G2, G3])
 
-end_graph = time.time()
-
-print("Graph creation time: %s" % (end_graph - start_graph))
-
 # a list of roads that must be avoided as they are not on bus routes
 # and will otherwise be used by Dijkstra's algorithm as part of shortest paths
 roads_to_avoid = []
 
+# remove all possible ways to access the forbidden road from each of its neighbours
 for node in G.neighbors(358657):
     roads_to_avoid.append(G[358657][node]) #Robert St (a one-way, narrow street that can't be traversed by bus)
 
@@ -85,7 +78,8 @@ road_segments = {}
 # a list of all bus stops used to find the nearest bus stops to the user's specified start and end points
 all_bus_stops = []
 
-#used to get OSM map tiles to create the initial selection map for the GUI
+# used to get OSM map tiles to create the initial selection map for the GUI
+# this method comes from markersportal.com
 def image_spoof(self, tile): # used to get image of Cork for initial selection
     url = self._image_url(tile) # get the url of the street map API
     req = Request(url) # start request
@@ -112,7 +106,8 @@ lgd_txt = '<span style="color: {col};">{txt}</span>'
 fg_dict = {}
 
 # a timetable of bus routes and bus stops in Cork is used
-#
+# to use another city's transport network, replace the string below
+# with an Excel file for the city of your choice
 timetable = 'timetable-cork.xlsx'
 
 # a dictionary indicating the sheet in the Excel file to be used for each
@@ -181,50 +176,52 @@ def get_nearest_bus_stop(G, y_coord, x_coord): #adapted from OSMNX's get_nearest
 
 #display the shortest path between the user's chosen points using buses where possible
 def display_route(route):
-    #take a bus where possible, stay on current bus where possible, if going from walk to multiple buses, take first bus
+    # take a bus where possible, stay on current bus where possible, if going from walk to multiple buses, take first bus
+    # initialize bus-related values
     battery = 100
     passengers = 0
     capacity = 50
 
-    #initially, there is no previous or current route, and that will only change once the first bus stop is reached
+    # initially, there is no previous or current route, and that will only change once the first bus stop is reached
     prev_route = "N/A"
     curr_route = "N/A"
+    
+    # create arrays to store X and Y coordinates
     xs = []
     ys = []
-
+    
+    # create a path of coordinate pairs
     path = []
 
+    # add each point's coordinates to the arrays
     for p in route:
         xs += [p[1]]
         ys += [p[0]]
-    start_route = time.time()
-    nearest = ox.get_nearest_edges(G, xs, ys, 'balltree')
-    end_route = time.time()
-    print("Route creation time: %s, route length: %s" % ((end_route - start_route), len(route)))
-
-    for p in route: #check if this works
         path += [(p[0], p[1])]
+    # use a ball tree for fast haversine search on graphs
+    nearest = ox.get_nearest_edges(G, xs, ys, 'balltree')
 
     for i in range(len(route) - 1):
         #only do this is current route is a bus route
 
         if (route[i], route[i+1]) in road_segments: #if this segment of road is on a bus route
             #if entering a new bus route, transfer battery and passengers over
-            prev_route = curr_route
-            curr_route = road_segments[(route[i], route[i+1])][0] #see if I need to add [0] to end
+            prev_route = curr_route # prev_route updated to the current (soon to be previous) route, as curr_route is about to be updated
+            curr_route = road_segments[(route[i], route[i+1])][0] # update curr_route to the next route on the path
 
-            if passengers < capacity:
-                on = random.randint(1, capacity - passengers)
+            if passengers < capacity: # if there is room for more passengers
+                on = random.randint(1, capacity - passengers) # add a random amount without exceeding capacity
             else:
                 print("Sorry! Bus full!")
                 on = 0
 
-            if passengers > 0:
-                off = random.randint(1, passengers)
+            if passengers > 0: # if the bus is not empty
+                off = random.randint(1, passengers) # at least one passenger will leave, but cannot have less than 0 passengers
             else:
                 print("Bus empty")
                 off = 0
 
+            # add the new passengers and remove the leaving passengers from the bus
             passengers += on
             print("%s new passengers have arrived" % on)
 
@@ -232,57 +229,63 @@ def display_route(route):
             print("%s passengers have left" % off)
             print("There are currently %s passengers" % passengers)
 
+            # if a charging station is passed, charge the battery to 100%
+            # Future Work: add a time penalty for charging, find the optimal amount to charge,
+            # and find a better way to detect charging station bus stops
             if get_nearest_bus_stop(G, route[i][0], route[i][1]) in charging_stations:
                 print("Charging battery")
                 battery = 100
 
+        # find the current route
         x = G[nearest[i][0]][nearest[i][1]]
-        if "name" in x[0].keys():
+        if "name" in x[0].keys(): # print its name if it has one
             print("Travelling on " + str(x[0]["name"]))
-        else:
+        else: #otherwise, use the default name of "Unnamed Road"
             print("Travelling on Unnamed Road")
 
+        # if the next road segment is on a bus route
         if (route[i], route[i+1]) in road_segments:
+            # if the previous road segment is on a bus route
             if (route[i-1], route[i]) in road_segments:
-                if set(road_segments[(route[i-1], route[i])]).intersection(set(road_segments[(route[i], route[i+1])])) != {}: #if possible, stay on the same bus
-                    #you are on a bus, so it will drain battery
+                if set(road_segments[(route[i-1], route[i])]).intersection(set(road_segments[(route[i], route[i+1])])) != {}: # if possible, stay on the same bus
+                    # you are on a bus, so it will drain battery
+                    # Future Work: devise a more sophisticated battery draining/charging formula
                     battery -= (0.005 * x[0]["length"])
                     print("%.2f%% battery remaining" % battery)
                     print("Remain on bus " + prev_route)
-                else:
+                else: # the previous and next roads are both on bus routes, but have no common bus routes
                     print("Switch to bus " + curr_route)
-                    battery = 100 #if getting on a new bus, assume it is initially at full charge
-            else: #previous road was not on a bus route
+                    battery = 100 # if getting on a new bus, assume it is initially at full charge
+            else: # previous road was not on a bus route
                 print("Get on bus " + curr_route)
-                battery = 100 #if getting on a new bus, assume it is initially at full charge
-        else: #not on a bus route
-            if (route[i-1], route[i]) in road_segments:
+                battery = 100 # if getting on a new bus, assume it is initially at full charge
+                # Future Work: determine the battery charge of any bus atany given point
+        else: # not on a bus route
+            if (route[i-1], route[i]) in road_segments: #if the previous route is on a bus route but the next one is not
                 print("Get off bus " + prev_route)
 
-
+# A method to add the coordinates for each node in each route
 def add_points(nodes):
     points = []
     for i in range(len(nodes)-1):
         a = nodes[i]
         b = nodes[i+1]
-        start_path = time.time()
         length, path = nx.bidirectional_dijkstra(G, a, b, 'length')
-        end_path = time.time()
-        print("Path of length %s took %s seconds to make" % (len(path), (end_path - start_path)))
-        points += path
-    points2 = points[:1] #remove duplicates, as these cause errors in plotting, as no node is connected to itself
+        points += path # find the shortest path between each pair of nodes, and add these to the list of points
+    points2 = points[:1] # remove duplicates, as these cause errors in plotting, as no node is connected to itself
     for j in points:
         if j != points2[-1]:
             points2.append(j)
     points3 = []
     for k in points2:
-        points3.append([G.nodes[k]['y'], G.nodes[k]['x']])
+        points3.append([G.nodes[k]['y'], G.nodes[k]['x']]) # add the coordinates of each point
 
+    # return the list of nodes and the list of coordinates
     return points2, points3
 
-def colour_lines(points, routenum, routemap):
 
-    #colours every segment of road on each bus route in the colour(s) of its route(s)
+# colours every segment of road on each bus route in the colour(s) of its route(s)
+def colour_lines(points, routenum, routemap):
 
     for i in range(len(points) - 1): #each segment is two points, so the last segment will start with the second-last stop
         if (tuple(points[i]), tuple(points[i+1])) not in road_segments:
@@ -293,30 +296,43 @@ def colour_lines(points, routenum, routemap):
             #otherwise, the segment is already on this route, don't re-add it
 
 
+# add the label and place it at the bottom of the GUI
 label = tk.Label(top, text="Select a start point by clicking on the map above")
 label.pack(side=tk.BOTTOM)
 
+# add instructions for how to zoom and pan to the GUI
 instructions = tk.Label(top, text="Click the four-headed arrow to toggle panning and zooming, if it is on, click and drag in any direction with the left mouse to pan, or with the right mouse to zoom. Click outside the map when done to confirm choice.")
 instructions.pack(side=tk.BOTTOM)
 
+# convert the Excel file to a format that is readable by Python
 file = pd.ExcelFile(timetable)
 
+# create the shortest path and all bus routes, and add them to the map given the start and end points
+# parameters: start = user's selected start point
+# end = user's selected end point
+# routemap = the map to place the routes on
 def setup(start, end, routemap):
 
+    # a list of all points on every route
     all_points = []
 
     n = 0 #unique ID for each bus stop, used to find nearest bus stop to start and end points
 
+    # for each route
     for num in route_dict.keys():
+        # set the route's colour
         linecolour = route_dict[num]["line_colour"]
+        
+        # read the bus stop data for that route into a data frame
         df = pd.read_excel(file, route_dict[num]["stops"], header=None)
         print("Excel file read")
+        
+        # get the stop coordinates from the data frame and add the coordinates to the list of stops
         stops = []
         stops_coords = df.iloc[:, 2]
-        start_stops = time.time()
         add_coords(stops_coords, stops)
-        end_stops = time.time()
-        print("Adding coordinates to stops took %s" % (end_stops - start_stops))
+        
+        # add each bus stop to the list of all bus stops, and record the coordinates
         nodes = []
         xs = []
         ys = []
@@ -325,69 +341,76 @@ def setup(start, end, routemap):
             xs += [p[1]]
             ys += [p[0]]
             n += 1
-        start_route_2 = time.time()
+        
+        # find the nearest edges for each edge on the route
         nearest = ox.get_nearest_edges(G, xs, ys, 'balltree')
-        end_route_2 = time.time()
-        print("Route took %s seconds to be calculated" % (end_route_2 - start_route_2))
 
+        # 
         for s in range(len(nearest)):
             nodes += [G.nodes()[nearest[s][0]]['osmid']]
             if s == len(nearest) - 1:
                 nodes += [G.nodes()[nearest[s][1]]['osmid']]
+        
+        # add all bus stops and charging stations to the map
         add_markers(stops, num, charging_stations)
+        
+        # add all points on each route
         points, points_2 = add_points(nodes)
+        
+        # colour in each bus route
         colour_lines(points_2, num, routemap)
         print("Points added")
         all_points.append(points)
+        
+        # add each feature group to the map to allow toggling
         routemap.add_child(fg_dict[num])
 
-    for j in road_segments.keys():
-        for k in range(len(road_segments[j])): #for each route that this segment is part of
+    for j in road_segments.keys(): # for each road segment
+        for k in range(len(road_segments[j])): # for each route that this segment is part of
             current = road_segments[j][k]
-            dashes = "%s %s" % (10 * (len(road_segments[j]) - k), 10 * k) #splits the line into n equal parts, no matter how big n is
+            dashes = "%s %s" % (10 * (len(road_segments[j]) - k), 10 * k) # splits the line into n equal parts, no matter how big n is
             pl = f.PolyLine(j, color=route_dict[current]["line_colour"], dash_array=dashes, weight=10)
             fg_dict[current].add_child(pl)
 
-    start_nearest = time.time()
+    # find the nearest nodes to the start and end selected by the user
     start_node = ox.get_nearest_node(G, start)
     end_node = ox.get_nearest_node(G, end)
-    end_nearest = time.time()
-    print("Finding the nearest nodes to the start and end points took %s" % (end_nearest - start_nearest))
 
+    # add markers to the user's chosen start and end
     f.Marker(location=start, icon=f.Icon(color="green")).add_to(routemap)
     f.Marker(location=end, icon=f.Icon(color="green")).add_to(routemap)
     print("Start and end point markers added")
 
-    #find nearest bus stop to start and end points, use these for route in display_route, then just use double Dijkstra for walking from start to first stop, and from last stop to end
-    start_nearest_stop = time.time()
+    # find nearest bus stop to start and end points, use these for route in display_route, then use double Dijkstra for walking from start to first stop, and from last stop to end
     start_stop = get_nearest_bus_stop(G, G.nodes()[start_node]['y'], G.nodes()[start_node]['x'])
     end_stop = get_nearest_bus_stop(G, G.nodes()[end_node]['y'], G.nodes()[end_node]['x'])
-    end_nearest_stop = time.time()
-    print("Finding the nearest bus stops to the start and end points took %s" % (end_nearest_stop - start_nearest_stop))
 
+    # find the first and last bus stops on the route
     start_stop_node = ox.get_nearest_node(G, all_bus_stops[start_stop][1])
     end_stop_node = ox.get_nearest_node(G, all_bus_stops[end_stop][1])
 
+    # a list of all road segments that are on bus routes
     bus_routes = []
 
     for edge in G.edges():
+        # for each edge in the graph, check if it is on a bus route
         start = (G.nodes()[edge[0]]['y'], G.nodes()[edge[0]]['x'])
         end = (G.nodes()[edge[1]]['y'], G.nodes()[edge[1]]['x'])
         edge_road = G[edge[0]][edge[1]]
-        if (start, end) in road_segments: #bus routes should be prioritized, as bussing takes less time than walking. See if some are in backwards
+        if (start, end) in road_segments: #bus routes should be prioritized, as bussing takes less time than walking
             bus_routes += [(edge[0], edge[1])]
-        edge_road[0]['time'] = edge_road[0]['length'] / WALKING_SPEED
+        edge_road[0]['time'] = edge_road[0]['length'] / WALKING_SPEED # all non-bus routes take longer to traverse as they must be walked
 
-    for edge in bus_routes:
+    for edge in bus_routes: # all bus routes get a smaller time value because they take less time to traverse
+        # the edges are one-way as the bus cannot travel in reverse, and bus routes are not the same going forward as they are going back
         G.add_edge(edge[0], edge[1], oneway=True, length=edge_road[0]['length'], time=edge_road[0]['length']/BUS_SPEED)
 
-    #add in path from start to first stop, and last stop to end, and add these to path
-    start_full_path = time.time()
+    #compute path from start to first stop, and last stop to end, and add these to path
     before_path = nx.bidirectional_dijkstra(G, start_node, start_stop_node, 'time')[1] #walking up to first stop
     temp_path = nx.bidirectional_dijkstra(G, start_stop_node, end_stop_node, 'time')[1]
     after_path = nx.bidirectional_dijkstra(G, end_stop_node, end_node, 'time')[1] #walking from last stop
-    end_full_path = time.time()
-    print("Finding the full path from start to end took %s seconds" % (end_full_path - start_full_path))
+    
+    # computing the three parts of the path
     xs = []
     ys = []
     path = []
@@ -401,24 +424,26 @@ def setup(start, end, routemap):
         t = G.nodes()[s]
         path += [(t['y'], t['x'])]
 
+    # add the shortest path to the map and the legend
     fg = f.FeatureGroup(name = lgd_txt.format(txt="Shortest Path", col="black"))
     pl = f.PolyLine(path, color="black", weight=4) #shortest path goes over bus routes, must be narrower
     fg.add_child(pl)
     routemap.add_child(fg)
 
+    # display the shortest path along with directions to the user
     display_route(path)
 
+    # add the legend to the map, and save the map as a HTML file
     f.map.LayerControl('topleft', collapsed= False).add_to(routemap)
     routemap.save('route.html')
     print("Route saved")
-    end_time = time.time()
-    print("Total time taken is %s seconds" % (end_time - start_time))
     exit()
 
+# get the OSM tiles for the initial selection map
 tiles.OSM.get_image = image_spoof
 osm_img = tiles.OSM()
 
-start_map = time.time()
+# plot the map on a graph using Matplotlib
 fig = plt.figure(figsize=(12,6))
 ax = plt.axes(projection=ccrs.PlateCarree()) #creates a map with standard lat-long coordinates
 
@@ -428,12 +453,13 @@ ax.set_extent(extent)
 
 scale = 15 # higher scales consume more memory, especially for large areas, so 15 is the maximum value that will work
 ax.add_image(osm_img, int(scale))
-end_map = time.time()
 
+# used to store the coordinates of the user's clicks on the map
 coords = []
 
 MAX_CLICK_LENGTH = 0.1 #used to distinguish click-and-drag for zooming/panning from clicking to choose a point
 
+# functions for handling user clicks
 def on_click(event, ax):
     ax.time_onclick = time.time()
 
@@ -449,15 +475,19 @@ def on_release(event, ax):
                 canvas.mpl_disconnect(c2)
                 setup(coords[0], coords[1], map_of_cork)
 
+# add in canvas to display map
 canvas = FigureCanvasTkAgg(fig, master=top)
 canvas.get_tk_widget().pack(side=tk.TOP)
 
+# add event handlers to click-based events
 c1 = canvas.mpl_connect('button_press_event', lambda event: on_click(event, ax))
 c2 = canvas.mpl_connect('button_release_event', lambda event: on_release(event, ax))
 
+# add toolbar to GUI
 toolbar = NavigationToolbar2Tk(canvas, top)
 canvas._tkcanvas.pack(side=tk.TOP)
 
+# add quit button to GUI
 button = tk.Button(master=top, text="Quit", command=exit)
 button.pack(side=tk.BOTTOM)
 
