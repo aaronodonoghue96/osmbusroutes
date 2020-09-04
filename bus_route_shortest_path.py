@@ -5,6 +5,20 @@ Created on Tue Jun 16 16:31:59 2020
 @author: aaron
 
 Base map and data from OpenStreetMap and OpenStreetMap Foundation
+
+The shortest path between each pair of nodes and all overall shortest paths produced
+are calculated by using the "length" attribute of each edge, which represents the
+length of the corresponding road in real life, including any curves on the road.
+The shortest path lengths are then calculated from the sum of the length of each 
+path between consecutive node pairs.
+
+To reduce the graph size, and ultimately the time and space required to compute the graph,
+the coordinates file was examined to determine which areas of Cork contained most of the
+bus stops. Once this had been done, the northern, southern, eastern and western extent
+of each group of outliers was calculated, and the graphs were created based on these figures,
+so that all of the area covered by bus networks would be covered while minimizing wasted
+space and minimizing the amount of graphs required.
+
 """
 
 import tkinter as tk
